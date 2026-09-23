@@ -1,18 +1,33 @@
-﻿-- Phase 2: Aggregation & Outlier Hunting
+-- Phase 2: Aggregation & Outlier Hunting
 -- building stat profiles for every player, looking for the outliers
 
 
 -- 1. how many total matches? how many accounts?
-
+SELECT COUNT(DISTINCT match_id) AS total_matches, 
+       COUNT(DISTINCT player_id) AS total_players 
+FROM match_telemetry;
 
 -- 2. match count per player, sorted by most active
-
+SELECT player_id, COUNT(match_id) AS most_matches 
+FROM match_telemetry 
+GROUP BY player_id 
+ORDER BY most_matches DESC;
 
 -- 3. global baseline - avg kills, deaths, headshots across all matches
 --    (need these numbers to know what "normal" looks like)
-
+SELECT AVG(kills) AS avg_kills,
+       AVG(deaths) AS avg_deaths,
+       AVG(headshots) AS avg_headshots
+FROM match_telemetry;
 
 -- 4. full player profile: matches played, avg kills, avg deaths, avg headshots
+SELECT player_id, COUNT(match_id) AS total_matches,
+       ROUND(AVG(kills), 1) AS avg_kills,
+       ROUND(AVG(deaths), 1) AS avg_deaths,
+       ROUND(AVG(headshots), 1) AS avg_headshots
+FROM match_telemetry
+GROUP BY player_id
+ORDER BY total_matches DESC;
 
 
 -- 5. accuracy percentage per player - (shots_hit / shots_fired) * 100

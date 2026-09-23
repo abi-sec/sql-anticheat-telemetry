@@ -2,7 +2,7 @@
 
 Brushing up on my SQL by working through a realistic anti-cheat investigation scenario. 
 
-Coming from a background as a Cheat Operations Analyst in the AAA games space, I previously spent a lot of time working in Splunk (SPL) for telemetry analysis, behavioral anomaly detection, threat intelligence, and account security. The logic of querying datasets and hunting suspicious patterns isn't unfamiliar territory for me, but I wanted a dedicated hands-on project to sharpen my relational SQL (PostgreSQL) workflow.
+Coming from a background as a Cheat Operations Analyst in the AAA games space, I previously spent a lot of time working in Splunk (SPL) for telemetry analysis, lead-driven investigation, log correlation, and account security. The logic of querying datasets and investigating suspicious patterns isn't unfamiliar territory for me, but I wanted a dedicated hands-on project to sharpen my relational SQL (PostgreSQL) workflow.
 
 To do that, I set up a mock telemetry database with player stats, match events, hardware fingerprints, and login history, then wrote queries across four phases to hunt down various cheater profiles hiding in the data.
 

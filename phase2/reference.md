@@ -1,4 +1,4 @@
-﻿# Phase 2 - Aggregations & Outlier Hunting
+# Phase 2 - Aggregations & Outlier Hunting
 
 Turning raw rows into player profiles. This is where you actually prove someone is cheating with numbers.
 
@@ -80,13 +80,24 @@ The `::NUMERIC` cast is a postgres thing - ROUND needs numeric type, not float.
 
 ## Calculated columns / division gotchas
 
+### Row-level (per match, no GROUP BY):
 ```sql
--- headshot percentage
-ROUND((headshots::NUMERIC / NULLIF(kills, 0)) * 100, 1) AS hs_pct
+SELECT match_id, player_id,
+       ROUND((headshots::NUMERIC / NULLIF(kills, 0)) * 100, 1) AS hs_pct
+FROM match_telemetry;
 ```
 
-- `::NUMERIC` - otherwise integer division gives 0 (3/10 = 0 not 0.3)
-- `NULLIF(kills, 0)` - returns NULL instead of 0, prevents division by zero crash
+### Grouped (career total across all matches, with GROUP BY):
+Must wrap in `SUM()` so Postgres totals up all matches for that player:
+```sql
+SELECT player_id,
+       ROUND((SUM(headshots)::NUMERIC / NULLIF(SUM(kills), 0)) * 100, 1) AS hs_pct
+FROM match_telemetry
+GROUP BY player_id;
+```
+
+- `::NUMERIC` - otherwise integer division gives 0 (e.g. 3/10 = 0 instead of 0.3)
+- `NULLIF(kills, 0)` - returns NULL instead of 0 to prevent division-by-zero crashes
 
 ---
 
