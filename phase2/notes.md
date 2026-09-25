@@ -142,9 +142,20 @@ ORDER BY total_matches DESC;
 ### Challenge 5: Accuracy percentage
 - **Question**: Calculate each player's average shooting accuracy percentage `(shots_hit / shots_fired * 100)`. Filter for players with unusually high accuracy.
 - **Approach / Notes**: Human averages sit around 20-35%. Anything consistently over 70-80% is suspicious.
+  - Started with `shots_fired / shots_hit` which was backwards. Accuracy is hits divided by total shots, not the other way around. Getting 300-500% values was the giveaway.
+  - Flipped the division to `shots_hit / shots_fired` but got all zeros. Integer division strikes again: `30 / 150 = 0` in integer math.
+  - Added `::NUMERIC` cast and finally got real percentages.
+  - Tried using the alias `shot_accuracy` in `HAVING` but that doesn't work because `HAVING` runs before `SELECT` in the execution order. Had to repeat the full expression.
+  - Also tried `WHERE` after `GROUP BY` which is a syntax error. `WHERE` filters rows before grouping, `HAVING` filters after.
 - **Query**:
 ```sql
-
+SELECT player_id,
+       ROUND((SUM(shots_hit)::NUMERIC / SUM(shots_fired)::NUMERIC) * 100, 2) AS shot_accuracy
+FROM match_telemetry
+GROUP BY player_id
+HAVING ROUND((SUM(shots_hit)::NUMERIC / SUM(shots_fired)::NUMERIC) * 100, 2) > 80
+ORDER BY shot_accuracy DESC;
+-- Players 21 (93.35%) and 15 (92.51%) are the only ones above 80%. Same suspects.
 ```
 
 ---
@@ -152,9 +163,17 @@ ORDER BY total_matches DESC;
 ### Challenge 6: Headshot percentage
 - **Question**: Calculate headshot ratio `(headshots / kills * 100)` per player. Identify anyone exceeding 50%.
 - **Approach / Notes**:
+  - Same pattern as Challenge 5. Used `SUM` with `::NUMERIC` cast and repeated the expression in `HAVING`.
+  - Players 15 and 21 at 85%+ headshot ratio, meaning practically every kill is a headshot. Players 16 and 19 also above 50%.
 - **Query**:
 ```sql
-
+SELECT player_id,
+       ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) AS headshot_ratio
+FROM match_telemetry
+GROUP BY player_id
+HAVING ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) > 50
+ORDER BY headshot_ratio DESC;
+-- 15 (86.26%), 21 (85.59%), 16 (60.10%), 19 (54.17%)
 ```
 
 ---
@@ -162,9 +181,17 @@ ORDER BY total_matches DESC;
 ### Challenge 7: Reaction time audit
 - **Question**: Calculate the average and minimum reaction time (`avg_reaction_time_ms`) per player. Sort by lowest reaction time.
 - **Approach / Notes**: Human visual reaction limits are typically 150ms+. Sub-100ms indicates automated triggerbots or memory-based aimbot injection.
+  - First attempt only had `AVG`, missed that the challenge asks for both average and minimum.
+  - Players 15 (35ms min, 39ms avg) and 21 (40ms min, 45ms avg) are way below human limits.
+  - Player 20 also sub-100ms (52ms min, 59ms avg) which is new.
+  - Player 16 has a 188ms average but a 72ms minimum. Could be toggling cheats on and off between matches.
 - **Query**:
 ```sql
-
+SELECT player_id, AVG(avg_reaction_time_ms) AS avg_reaction_time,
+       MIN(avg_reaction_time_ms) AS min_reaction_time
+FROM match_telemetry
+GROUP BY player_id
+ORDER BY min_reaction_time ASC;
 ```
 
 ---
@@ -172,9 +199,15 @@ ORDER BY total_matches DESC;
 ### Challenge 8: High report volume
 - **Question**: Count the number of player reports per target from `player_reports`. Filter for players with 3 or more reports.
 - **Approach / Notes**:
+  - First query from a different table (`player_reports` instead of `match_telemetry`).
+  - Initially used `> 3` instead of `>= 3`. Same results here but the logic matters - "3 or more" means `>=`.
+  - Player 15 has 8 reports, Player 16 has 4.
 - **Query**:
 ```sql
-
+SELECT reported_player_id, COUNT(reported_player_id) AS total_reports_per_player
+FROM player_reports
+GROUP BY reported_player_id
+HAVING COUNT(reported_player_id) >= 3;
 ```
 
 ---
@@ -182,9 +215,16 @@ ORDER BY total_matches DESC;
 ### Challenge 9: Kill/Death ratio (K/D)
 - **Question**: Calculate the average K/D ratio per player `(SUM(kills) / NULLIF(SUM(deaths), 0))`. Find players with K/D above 3.0.
 - **Approach / Notes**:
+  - First attempt used `ROUND` without the second argument, so K/D ratios came out as whole numbers (12, 10, 8, etc.). Adding `, 2` fixed it.
+  - The rounding actually mattered here. Player 16 has a 3.08 K/D which rounded down to 3, so they didn't pass the `> 3` filter until decimals were added.
 - **Query**:
 ```sql
-
+SELECT player_id, ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) AS kd_ratio
+FROM match_telemetry
+GROUP BY player_id
+HAVING ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) > 3.0
+ORDER BY kd_ratio DESC;
+-- 15 (11.91), 19 (9.60), 21 (8.43), 17 (4.39), 18 (3.53), 16 (3.08)
 ```
 
 ---
@@ -192,7 +232,25 @@ ORDER BY total_matches DESC;
 ### Challenge 10: The Full Dossier (Boss Challenge)
 - **Question**: Build a single comprehensive query summarizing player profiles: total matches, avg kills, avg deaths, overall K/D, headshot %, accuracy %, and min reaction time. Filter for players showing statistical anomalies in any category.
 - **Approach / Notes**:
+  - First attempt had `total matches` with a space in the alias. Caught it and switched to `total_matches`.
+  - Forgot `GROUP BY player_id` initially. Without it Postgres doesn't know how to split the aggregates per player.
+  - Used `AS` aliases inside `HAVING` (like `MIN(avg_reaction_time_ms) AS min_reaction_time < 100`) which doesn't work. `AS` is only for `SELECT`, not for conditions.
+  - Wrote `(AVG(kills), 1) > 20` instead of `ROUND(AVG(kills), 1) > 20`. The parentheses with a comma creates a tuple, not a ROUND call.
+  - Used `OR` in `HAVING` to flag anyone suspicious in **any** category rather than `AND` which would require all conditions to be true.
+  - 8 players flagged total. Players 15 and 21 light up every single column. Players like 20 and 5 only flag for one thing each (reaction time and avg kills respectively).
 - **Query**:
 ```sql
-
+SELECT player_id, COUNT(match_id) AS total_matches,
+       ROUND(AVG(kills), 1) AS avg_kills,
+       ROUND(AVG(deaths), 1) AS avg_deaths,
+       ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) AS kd_ratio,
+       ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) AS headshot_ratio,
+       ROUND((SUM(shots_hit)::NUMERIC / SUM(shots_fired)::NUMERIC) * 100, 2) AS shot_accuracy,
+       MIN(avg_reaction_time_ms) AS min_reaction_time
+FROM match_telemetry
+GROUP BY player_id
+HAVING ROUND(AVG(kills), 1) > 20 OR ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) > 3.0 OR
+       ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) > 50.00 OR
+       ROUND((SUM(shots_hit)::NUMERIC / SUM(shots_fired)::NUMERIC) * 100, 2) > 80.00 OR
+       MIN(avg_reaction_time_ms) < 100;
 ```
