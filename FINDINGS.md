@@ -4,15 +4,17 @@
 
 ### 1. Account Farming / Bot Ring
 - **Suspects**: Player IDs 17, 18, 19 (`freshstart_01`, `freshstart_02`, `freshstart_03`)
-- **Found via**: Phase 1 (Challenges 6 & 7)
+- **Found via**: Phase 1 (Challenges 6 & 7), Phase 3 (Challenges 4, 5, 6)
 - **Evidence**: 
   - All registered on the exact same day (Sept 10, 2026).
   - Used disposable `tempmail` domains.
   - Low level accounts (1-2) with barely any playtime. Textbook burner account pattern.
+  - All three share the same hardware ID (`HW-CAFE0000BABE0000CAFE0000BABE0000`). Confirmed same machine.
+  - All three share the same IP address (`91.198.174.50`, EU-East). Same network too.
 
 ### 2. High-Performance / Aimbot or Smurfing
 - **Suspects**: Player IDs 15 (`xX_Shadow_Xx`), 16 (`ProGamer2024`), 21 (`BannedBandit`)
-- **Found via**: Phase 1 (Challenges 8, 9, 11) and Phase 2 (Challenges 4-10)
+- **Found via**: Phase 1 (Challenges 8, 9, 11), Phase 2 (Challenges 4-10), Phase 3 (Challenges 4, 5, 6)
 - **Evidence**:
   - Dropping 25+ kill games consistently while keeping deaths at 3 or lower.
   - IDs 15 and 21 play off-hours habitually (1 AM to 4:30 AM).
@@ -24,6 +26,9 @@
   - Reports: Player 15 has 8 reports filed against them, Player 16 has 4. Community is clearly noticing.
   - Player 21 is already banned, Player 15 is currently "under review", and Player 16 is weirdly active with highly suspicious performance spikes.
   - Full dossier flagged 8 players total. Players 15 and 21 light up every category. Others like Player 20 and Player 5 only flag for one thing each (reaction time and avg kills).
+  - **Hardware link**: Players 15 and 21 share hardware ID `HW-DEAD0000BEEF0000DEAD0000BEEF0000`. Same person, BannedBandit got banned and came back as xX_Shadow_Xx.
+  - **IP link**: Both also share IP `185.220.101.42` (EU-East). Double confirmed same person.
+  - **ProGamer2024 has no hardware fingerprint on file** despite being the most active player (12 matches). Either blocking fingerprinting or it was wiped.
 
 ### 3. Suspicious Reaction Time Only
 - **Suspect**: Player ID 20

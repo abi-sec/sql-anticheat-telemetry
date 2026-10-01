@@ -81,9 +81,18 @@ GROUP BY a.username;
 ### Challenge 1: Named stat profiles
 - **Question**: Join `match_telemetry` with `accounts` to show player **usernames** alongside their avg kills, avg deaths, and total matches. No more working with just player IDs.
 - **Approach / Notes**:
+  - Used LEFT JOIN to connect telemetry to accounts.
+  - Had a few minor typos early on (like `a.usernames` and using a dot for `m.player.id`), but got it working.
+  - Nice to finally see the stats attached to actual names instead of just numbers.
 - **Query**:
 ```sql
-
+SELECT a.username,
+       ROUND(AVG(m.kills), 2) AS avg_kills,
+       ROUND(AVG(m.deaths), 2) AS avg_deaths,
+       COUNT(m.match_id) AS total_matches
+FROM accounts a
+LEFT JOIN match_telemetry m ON m.player_id = a.account_id
+GROUP BY a.username;
 ```
 
 ---
@@ -91,9 +100,16 @@ GROUP BY a.username;
 ### Challenge 2: Report details with names
 - **Question**: Join `player_reports` with `accounts` to show the **username** of the reported player, the reason for the report, and the report date. Sort by most recent reports first.
 - **Approach / Notes**:
+  - Proved out why table order matters for LEFT JOIN. 
+  - Starting with `FROM accounts` gave 33 rows with a bunch of empty blanks for players with zero reports.
+  - Switching to `FROM player_reports` pulled exactly the 21 actual reports we cared about. 
+  - `ORDER BY report_date DESC` worked perfectly to sort the timestamps.
 - **Query**:
 ```sql
-
+SELECT a.username, p.reason, p.report_date
+FROM player_reports p
+LEFT JOIN accounts a ON p.reported_player_id = a.account_id
+ORDER BY report_date DESC;
 ```
 
 ---
@@ -101,9 +117,16 @@ GROUP BY a.username;
 ### Challenge 3: Who reported who?
 - **Question**: Extend Challenge 2 by also joining the **reporter's** username. You'll need to join `accounts` twice (once for the reported player, once for the reporter).
 - **Approach / Notes**:
+  - Initially got a "table name specified more than once" error.
+  - Learned about dual aliases. You can join the exact same table twice as long as you give it two different nicknames (like `a` and `b`).
+  - Pulled `a.username AS abuser` and `b.username AS reporter`. The report log is completely readable now.
 - **Query**:
 ```sql
-
+SELECT a.username AS abuser, b.username AS reporter, p.reason, p.report_date
+FROM player_reports p
+LEFT JOIN accounts a ON p.reported_player_id = a.account_id
+LEFT JOIN accounts b ON p.reporter_player_id = b.account_id
+ORDER BY report_date DESC;
 ```
 
 ---
@@ -111,9 +134,16 @@ GROUP BY a.username;
 ### Challenge 4: Hardware sharing detection
 - **Question**: Find any `hardware_id` from `hardware_fingerprints` that is linked to **more than one** account. Show the hardware ID and the list of account IDs sharing it.
 - **Approach / Notes**:
+  - Initially tried grouping by `account_id` which was backwards - that shows how many hardware IDs each account has, not how many accounts share a hardware ID.
+  - Then tried `GROUP BY hardware_id, account_id` which split every account into its own group (all counts = 1). Had to remove `account_id` from GROUP BY.
+  - Used `ARRAY_AGG(account_id)` to collect all account IDs into a list per hardware ID. Same type of aggregate as COUNT or SUM but it bundles values into an array instead of computing a number.
+  - Didn't even need a JOIN for the basic version - it's all in the `hardware_fingerprints` table.
 - **Query**:
 ```sql
-
+SELECT hardware_id, ARRAY_AGG(account_id) AS accounts, COUNT(account_id)
+FROM hardware_fingerprints
+GROUP BY hardware_id
+HAVING COUNT(account_id) > 1;
 ```
 
 ---
@@ -121,9 +151,16 @@ GROUP BY a.username;
 ### Challenge 5: Hardware to username mapping
 - **Question**: Take the shared hardware IDs from Challenge 4 and join with `accounts` to show the actual **usernames** sharing hardware. This is how you catch ban evasion and multi-accounting.
 - **Approach / Notes**:
+  - Combined Challenges 4 and 5 into one query by joining `accounts` and using `ARRAY_AGG` on both account IDs and usernames.
+  - Results: `HW-DEAD...BEEF...` shared by xX_Shadow_Xx and BannedBandit. `HW-CAFE...BABE...` shared by freshstart_01, 02, and 03. Confirmed ban evasion and a farming ring.
 - **Query**:
 ```sql
-
+SELECT h.hardware_id, ARRAY_AGG(h.account_id) AS accounts,
+       ARRAY_AGG(a.username) AS usernames, COUNT(h.account_id)
+FROM hardware_fingerprints h
+LEFT JOIN accounts a ON h.account_id = a.account_id
+GROUP BY h.hardware_id
+HAVING COUNT(h.account_id) > 1;
 ```
 
 ---
@@ -131,9 +168,18 @@ GROUP BY a.username;
 ### Challenge 6: Shared IP detection
 - **Question**: Find any IP addresses in `login_history` used by **more than one** account. Show the IP, region, and the usernames sharing it.
 - **Approach / Notes**:
+  - Same pattern as Challenge 4/5 but with `login_history` and `ip_address`.
+  - Got duplicate usernames in `ARRAY_AGG` because each login is a separate row. Used `DISTINCT` inside `ARRAY_AGG` to fix.
+  - The tricky part: `DISTINCT` in `ARRAY_AGG` and `DISTINCT` in `COUNT` are independent. Adding DISTINCT to one aggregate doesn't affect the other. Each aggregate function does its own separate calculation.
+  - Without `COUNT(DISTINCT i.account_id)`, players who logged in multiple times from the same IP showed up as "shared" even though it was just one person.
+  - Same two groups flagged: `185.220.101.42` shared by BannedBandit and xX_Shadow_Xx, `91.198.174.50` shared by all three freshstart accounts.
 - **Query**:
 ```sql
-
+SELECT i.ip_address, i.region, ARRAY_AGG(DISTINCT a.username) AS usernames
+FROM login_history i
+LEFT JOIN accounts a ON i.account_id = a.account_id
+GROUP BY i.ip_address, i.region
+HAVING COUNT(DISTINCT i.account_id) > 1;
 ```
 
 ---
