@@ -48,9 +48,23 @@ HAVING COUNT(DISTINCT i.account_id) > 1;
 
 
 -- 7. threat level classification using CASE WHEN
-
+SELECT a.username, ROUND(AVG(m.kills), 2) AS avg_kills,
+       CASE
+           WHEN ROUND(AVG(m.kills), 2) > 25 THEN 'inhuman'
+           WHEN ROUND(AVG(m.kills), 2) > 15 THEN 'suspicious'
+           ELSE 'baseline'
+       END AS kills_suspicion
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+GROUP BY a.username
+ORDER BY avg_kills DESC;
 
 -- 8. report count with zero-report players using LEFT JOIN + COALESCE
+SELECT a.username, COALESCE(COUNT(p.report_id), 0) AS report_count
+FROM accounts a
+LEFT JOIN player_reports p ON a.account_id = p.reported_player_id
+GROUP BY a.username
+ORDER BY report_count DESC;
 
 
 -- 9. player 16's before/after stat split using CASE WHEN

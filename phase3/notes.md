@@ -187,9 +187,22 @@ HAVING COUNT(DISTINCT i.account_id) > 1;
 ### Challenge 7: Threat level classification
 - **Question**: Using `CASE WHEN`, assign a threat level to each player based on their avg kills: 'high_risk' (> 25), 'watch_list' (> 15), 'normal' (everyone else). Join with `accounts` to show usernames.
 - **Approach / Notes**:
+  - Used `?` in an alias name (`cheating?`) which doesn't work. Special characters aren't allowed in aliases.
+  - Accidentally used `match_telemetry m` in both FROM and LEFT JOIN which gave a "table name specified more than once" error. Fixed by using `LEFT JOIN accounts a` instead.
+  - Changed the labels to 'inhuman', 'suspicious', and 'baseline' for clarity.
+  - Added ROUND to clean up the avg_kills column.
 - **Query**:
 ```sql
-
+SELECT a.username, ROUND(AVG(m.kills), 2) AS avg_kills,
+       CASE
+           WHEN ROUND(AVG(m.kills), 2) > 25 THEN 'inhuman'
+           WHEN ROUND(AVG(m.kills), 2) > 15 THEN 'suspicious'
+           ELSE 'baseline'
+       END AS kills_suspicion
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+GROUP BY a.username
+ORDER BY avg_kills DESC;
 ```
 
 ---
@@ -197,9 +210,17 @@ HAVING COUNT(DISTINCT i.account_id) > 1;
 ### Challenge 8: Report count with zero-report players
 - **Question**: Using `LEFT JOIN`, show every account's username alongside their total report count. Players with no reports should show 0, not disappear from results. Use `COALESCE` if needed.
 - **Approach / Notes**:
+  - Tried `FROM player_reports LEFT JOIN accounts` first but only got 9 rows (only players with reports). The FROM table is the one that keeps all its rows.
+  - Swapped to `FROM accounts LEFT JOIN player_reports` and got all 21 players with 0s for the ones with no reports.
+  - COALESCE is technically redundant here because COUNT already returns 0 for no matches, but it's good practice for other aggregates like SUM/AVG which return NULL.
+  - Also learned about RIGHT JOIN as an alternative. `FROM player_reports RIGHT JOIN accounts` would do the same thing, but most people just swap the table order and use LEFT JOIN.
 - **Query**:
 ```sql
-
+SELECT a.username, COALESCE(COUNT(p.report_id), 0) AS report_count
+FROM accounts a
+LEFT JOIN player_reports p ON a.account_id = p.reported_player_id
+GROUP BY a.username
+ORDER BY report_count DESC;
 ```
 
 ---
