@@ -228,9 +228,26 @@ ORDER BY report_count DESC;
 ### Challenge 9: Player 16's before/after split
 - **Question**: Player 16 (`ProGamer2024`) has a suspicious stat spike. Join their telemetry with `accounts` and use `CASE WHEN` to label each match as 'before' (kills < 10) or 'after' (kills >= 10). Compare the averages of each period.
 - **Approach / Notes**:
+  - Huge learning point: `CASE` statements can be used directly inside `GROUP BY` to create custom buckets on the fly.
+  - Spent time debugging because `m.match_id` was left in `SELECT` and `GROUP BY`. Since `match_id` is unique to every match, Postgres kept splitting into 12 separate match rows instead of collapsing them into 2 summary rows.
+  - Once `m.match_id` was removed, it grouped cleanly into 'before' and 'after'.
+  - Shocking contrast: Went from 3.50 avg kills to 30.33 avg kills. Night and day difference, classic sign of account hijacking, account sale, or toggle cheats.
 - **Query**:
 ```sql
-
+SELECT a.username, ROUND(AVG(m.kills), 2) AS avg_kills,
+       CASE
+           WHEN m.kills >= 10 THEN 'after'
+           WHEN m.kills < 10 THEN 'before'
+       END AS kills_avg_comparison
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WHERE a.username = 'ProGamer2024'
+GROUP BY a.username,
+       CASE
+           WHEN m.kills >= 10 THEN 'after'
+           WHEN m.kills < 10 THEN 'before'
+       END;
+-- before: 3.50 avg kills | after: 30.33 avg kills
 ```
 
 ---

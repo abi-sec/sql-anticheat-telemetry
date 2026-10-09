@@ -29,6 +29,7 @@
   - **Hardware link**: Players 15 and 21 share hardware ID `HW-DEAD0000BEEF0000DEAD0000BEEF0000`. Same person, BannedBandit got banned and came back as xX_Shadow_Xx.
   - **IP link**: Both also share IP `185.220.101.42` (EU-East). Double confirmed same person.
   - **ProGamer2024 has no hardware fingerprint on file** despite being the most active player (12 matches). Either blocking fingerprinting or it was wiped.
+  - **ProGamer2024 before/after split**: Sat at 3.50 avg kills across matches before September, then jumped to 30.33 avg kills in September. An overnight 9x jump in kill volume confirms account takeover, bought account, or toggle cheats.
 
 ### 3. Suspicious Reaction Time Only
 - **Suspect**: Player ID 20

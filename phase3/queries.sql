@@ -68,6 +68,19 @@ ORDER BY report_count DESC;
 
 
 -- 9. player 16's before/after stat split using CASE WHEN
+SELECT a.username, ROUND(AVG(m.kills), 2) AS avg_kills,
+       CASE
+           WHEN m.kills >= 10 THEN 'after'
+           WHEN m.kills < 10 THEN 'before'
+       END AS kills_avg_comparison
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WHERE a.username = 'ProGamer2024'
+GROUP BY a.username,
+       CASE
+           WHEN m.kills >= 10 THEN 'after'
+           WHEN m.kills < 10 THEN 'before'
+       END;
 
 
 -- 10. THE EVIDENCE BOARD
