@@ -40,7 +40,9 @@
   - Could be a triggerbot user who isn't using aim assist, or could be a data anomaly. Needs further investigation in Phase 3 with hardware/login data.
 
 ## False Positives
-- **Players**: IDs 7 (`CampKing`) and 8 (`SniperElite`)
-- **Found via**: Phase 1 (Challenge 3)
-- **Reasoning**: Popped up a lot when filtering for primary AWP (sniper) users. Looked into them and their stats just line up with being legitimate dedicated sniper mains.
+- **Players**: IDs 7 (`CampKing`), 8 (`SniperElite`), 5 (`HeadshotQueen`)
+- **Found via**: Phase 1 (Challenge 3), Phase 3 (Challenge 10)
+- **Reasoning**:
+  - IDs 7 and 8 popped up a lot when filtering for primary AWP (sniper) users. Stats line up with legitimate sniper mains.
+  - ID 5 (`HeadshotQueen`) flagged in the Phase 3 Evidence Board purely on high kill average (20.17 avg kills). However, their K/D is normal (2.02), headshot ratio is human level (28.10%), and reaction time is standard (190ms+). Legit veteran player, not a cheater.
 

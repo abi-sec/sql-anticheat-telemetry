@@ -87,3 +87,23 @@ GROUP BY a.username,
 --     full suspect report: username, status, matches, avg kills, K/D,
 --     HS%, hardware ID, report count, threat level
 --     join accounts + telemetry + hardware + reports
+SELECT a.username, a.account_status,
+       COUNT(DISTINCT m.match_id) AS total_matches,
+       ROUND(AVG(m.kills), 2) AS avg_kills,
+       CASE
+           WHEN ROUND(AVG(m.kills), 2) >= 25 THEN 'inhuman'
+           WHEN ROUND(AVG(m.kills), 2) < 20 THEN 'suspicious'
+           ELSE 'baseline'
+       END AS kills_suspicion,
+       ROUND((SUM(m.kills)::NUMERIC / NULLIF(SUM(m.deaths), 0)), 2) AS kd_ratio,
+       ROUND((SUM(m.headshots)::NUMERIC / SUM(m.kills)::NUMERIC) * 100, 2) AS headshot_ratio,
+       h.hardware_id,
+       COUNT(DISTINCT p.report_id) AS report_count
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+LEFT JOIN hardware_fingerprints h ON m.player_id = h.account_id
+LEFT JOIN player_reports p ON a.account_id = p.reported_player_id
+GROUP BY a.username, a.account_status, h.hardware_id
+HAVING ROUND(AVG(m.kills), 2) > 20
+   OR ROUND((SUM(m.kills)::NUMERIC / NULLIF(SUM(m.deaths), 0)), 2) > 3.0
+   OR ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) > 50;

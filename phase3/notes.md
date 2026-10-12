@@ -255,7 +255,31 @@ GROUP BY a.username,
 ### Challenge 10: The Evidence Board (Boss Challenge)
 - **Question**: Build a comprehensive suspect report joining `accounts`, `match_telemetry`, `hardware_fingerprints`, and `player_reports`. For each player, show: username, account status, total matches, avg kills, K/D ratio, headshot %, hardware ID, and report count. Use `LEFT JOIN` for reports (not every suspect has reports) and `CASE WHEN` for threat classification. Filter for players who appear in any suspicious category from Phase 2.
 - **Approach / Notes**:
+  - The initial attempt returned 180 rows because `m.match_id` and `p.report_id` were in `SELECT` and `GROUP BY`, preventing Postgres from collapsing rows per player.
+  - Learned about table multiplication: joining matches (1-to-many) with reports (1-to-many) multiplies rows against each other. Solved this cleanly using `COUNT(DISTINCT m.match_id)` for matches and `COUNT(DISTINCT p.report_id)` for reports.
+  - Hit a sneaky NULL join bug: originally joined `player_reports` onto `h.account_id`. Since ProGamer2024 has no hardware fingerprint on file (`h` is NULL), their 4 reports got wiped out. Linking reports directly to `a.account_id` fixed it.
+  - Fixed row splitting in `CASE`: used `ROUND(AVG(m.kills), 2)` inside `CASE` instead of raw `m.kills`. Evaluating at the player level meant players weren't split across different match categories, and because it's an aggregate, it didn't need to be in `GROUP BY`.
+  - Filtered down with `HAVING` to isolate the 7 anomalous accounts.
 - **Query**:
 ```sql
-
+SELECT a.username, a.account_status,
+       COUNT(DISTINCT m.match_id) AS total_matches,
+       ROUND(AVG(m.kills), 2) AS avg_kills,
+       CASE
+           WHEN ROUND(AVG(m.kills), 2) >= 25 THEN 'inhuman'
+           WHEN ROUND(AVG(m.kills), 2) < 20 THEN 'suspicious'
+           ELSE 'baseline'
+       END AS kills_suspicion,
+       ROUND((SUM(m.kills)::NUMERIC / NULLIF(SUM(m.deaths), 0)), 2) AS kd_ratio,
+       ROUND((SUM(m.headshots)::NUMERIC / SUM(m.kills)::NUMERIC) * 100, 2) AS headshot_ratio,
+       h.hardware_id,
+       COUNT(DISTINCT p.report_id) AS report_count
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+LEFT JOIN hardware_fingerprints h ON m.player_id = h.account_id
+LEFT JOIN player_reports p ON a.account_id = p.reported_player_id
+GROUP BY a.username, a.account_status, h.hardware_id
+HAVING ROUND(AVG(m.kills), 2) > 20
+   OR ROUND((SUM(m.kills)::NUMERIC / NULLIF(SUM(m.deaths), 0)), 2) > 3.0
+   OR ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) > 50;
 ```
