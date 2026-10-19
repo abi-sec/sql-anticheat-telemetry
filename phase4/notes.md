@@ -70,6 +70,44 @@ FROM match_telemetry;
 - The running total resets per player partition and accumulates chronologically based on the `ORDER BY match_date`.
 - Without the frame clause, `ORDER BY` in the window defaults to `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` anyway - same behavior. But being explicit is clearer.
 
+### 6. Date Arithmetic & AGE()
+Tested timestamp subtraction and `AGE()` behavior:
+```sql
+SELECT a.username, MIN(m.match_date) - a.created_at AS time_to_first_match
+FROM match_telemetry m
+JOIN accounts a ON a.account_id = m.player_id
+GROUP BY a.username, a.created_at
+ORDER BY time_to_first_match ASC;
+```
+- `AGE(a, b)` computes `a - b`. Argument order controls positive vs negative signs. Single-argument `AGE(ts)` uses midnight (`current_date`), which can introduce small unexpected offsets.
+- Simple timestamp subtraction (`match_date - created_at`) produces a clean day/time interval directly without compound year/month grouping.
+- Finding: `freshstart_01`, `02`, and `03` all jumped into matches within 3.5 to 5 hours of account creation. Legitimate accounts averaged 40 to 700+ days before their first recorded match.
+
+### 7. EXTRACT & Session Velocity (LAG with EPOCH)
+Tested login velocity across shared IP addresses using `LAG` and `EXTRACT(EPOCH ...)`:
+```sql
+SELECT ip_address, login_time,
+       ROUND(EXTRACT(EPOCH FROM (login_time - LAG(login_time) OVER (
+           PARTITION BY ip_address ORDER BY login_time
+       ))) / 3600, 2) AS hours_between
+FROM login_history;
+```
+- `EXTRACT(DAY FROM interval)` only pulls the day component, not total days. For true elapsed time, `EXTRACT(EPOCH FROM interval)` gives total seconds (divide by 3600 for hours, 86400 for days).
+- Normal players log in once every 120 to 200+ hours.
+- Bot farm (`91.198.174.50`) churns logins in 2.5 hours and 45 minutes (0.75 hours) across multiple accounts.
+- Evasion IP (`185.220.101.42`) shows a 961-hour gap (~40 days) marking the exact downtime between BannedBandit getting banned and xX_Shadow_Xx launching.
+
+### 8. Subqueries vs LEFT JOINs (Master List Anchor)
+Compared scalar subqueries against `LEFT JOIN` aggregations:
+```sql
+SELECT a.username, COUNT(p.report_id) AS report_count
+FROM accounts a
+LEFT JOIN player_reports p ON a.account_id = p.reported_player_id
+GROUP BY a.username;
+```
+- Whatever table is placed in `FROM` acts as the master anchor. Starting `FROM accounts` keeps all 21 accounts (even those with 0 reports). Starting `FROM player_reports` drops un-reported accounts entirely.
+- The `ON a.account_id = p.reported_player_id` condition matches the exact role of the subquery's `WHERE p.reported_player_id = a.account_id`.
+
 ---
 
 ## Part 2: Phase 4 Challenges
