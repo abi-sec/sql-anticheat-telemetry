@@ -163,7 +163,27 @@ LEFT JOIN reports r ON r.reported_player_id = s.player_id;
 - **Question**: For every player, show each match in chronological order alongside the **previous match's kills** and the **delta** (current kills minus previous kills). Use `LAG` partitioned by player and ordered by match date. Join with accounts for usernames.
 - **Why this matters**: Stat deltas reveal toggling behavior. A legit player's kills fluctuate +/- 5. A cheater toggling on shows +20 jumps.
 - **Approach / Notes**:
+  - `LAG()` tracks sequential row-to-row movement within partitions. The first match per player partition naturally yields `NULL` because there is no prior match.
+  - Subtraction order: delta is calculated as `current - previous` (`m.kills - LAG(m.kills)`). Positive deltas represent kill increases; negative deltas represent drops. Normal legitimate players oscillate in a tight band (+/- 2 to 6 kills).
+  - Eliminating code repetition: instead of copying `OVER (PARTITION BY m.player_id ORDER BY m.match_date)` multiple times across columns, the `WINDOW` clause (`WINDOW w AS (...)`) lets you define the window once at the query base and reference it cleanly as `OVER w`.
+  - Core finding: ProGamer2024 shows standard small fluctuations until September 1st, where a +25 kill delta spikes out of nowhere (3 kills -> 28 kills).
 - **Query**:
+```sql
+-- Original inline OVER clause version:
+SELECT a.username, m.player_id, m.match_date, m.kills,
+       LAG(m.kills) OVER (PARTITION BY m.player_id ORDER BY m.match_date) AS previous_kills,
+       m.kills - LAG(m.kills) OVER (PARTITION BY m.player_id ORDER BY m.match_date) AS delta
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id;
+
+-- Named WINDOW clause version (cleaner refactor):
+SELECT a.username, m.player_id, m.match_date, m.kills,
+       LAG(m.kills) OVER w AS previous_kills,
+       m.kills - LAG(m.kills) OVER w AS delta
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WINDOW w AS (PARTITION BY m.player_id ORDER BY m.match_date);
+```
 
 ---
 
@@ -171,7 +191,20 @@ LEFT JOIN reports r ON r.reported_player_id = s.player_id;
 - **Question**: Focus on Player 16 (`ProGamer2024`). Using `LAG`, find the **exact match** where kills spiked. Show: match_date, kills, previous kills, delta, map, and reaction time. Order chronologically. Which single match is the inflection point?
 - **Why this matters**: In Phase 3 you used a rough before/after bucket. This gives you the precise moment of behavior change - the difference between "stats changed sometime" and "stats changed on September 1st at 10 PM on Dust_II."
 - **Approach / Notes**:
+  - Filtering to a single player (`WHERE a.username = 'ProGamer2024'`) means partitioning by player ID is no longer strictly required; `WINDOW w AS (ORDER BY m.match_date)` operates on the filtered single-player timeline.
+  - The inflection point is indisputable: on **September 1, 2026 at 22:00:00 on Dust_II**, kills immediately shot up from 3 to 28 (+25 delta).
+  - Correlating metrics: along with the +25 kill spike, reaction time simultaneously collapsed from human levels (~300ms) down to 85ms, dropping further to 72ms by mid-September. Proves either account takeover or cheat injection at that exact timestamp.
 - **Query**:
+```sql
+SELECT a.username, m.match_date, m.kills,
+       LAG(m.kills) OVER w AS previous_kills,
+       m.kills - LAG(m.kills) OVER w AS delta,
+       m.map_name, m.avg_reaction_time_ms
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WHERE a.username = 'ProGamer2024'
+WINDOW w AS (ORDER BY m.match_date);
+```
 
 ---
 
@@ -179,7 +212,22 @@ LEFT JOIN reports r ON r.reported_player_id = s.player_id;
 - **Question**: Use `ROW_NUMBER()` with `PARTITION BY player_id ORDER BY kills DESC` to rank each player's matches from best to worst. Then filter for only each player's **#1 best game**. Show username, kills, map, and match date. Who has the highest single-game kill count?
 - **Why this matters**: Leaderboard analysis. If a player's #1 game is 3x their average, it could indicate a one-time cheat toggle or a boosted match.
 - **Approach / Notes**:
+  - The two-pass CTE pattern: Window functions run during the SELECT stage, which is *after* the WHERE clause in SQL execution order. You cannot directly write `WHERE ROW_NUMBER() = 1`. Wrapping the window function in a CTE stamps a permanent rank column (`match_rank`) onto each row, allowing the outer query's `WHERE` to filter for `= 1`.
+  - Partitioning by player ID guarantees each player gets their own sequential `#1`, `#2`, `#3`... independent of others.
+  - Server leaderboard results: `xX_Shadow_Xx` holds the absolute highest single-game record with 38 kills on Nuke, followed closely by `ProGamer2024` (35 kills on Overpass) and `BannedBandit` (33 kills on Inferno).
 - **Query**:
+```sql
+WITH ranked_matches AS (
+    SELECT a.username, m.kills, m.map_name, m.match_date,
+           ROW_NUMBER() OVER (PARTITION BY m.player_id ORDER BY m.kills DESC) AS match_rank
+    FROM match_telemetry m
+    LEFT JOIN accounts a ON a.account_id = m.player_id
+)
+SELECT username, kills, map_name, match_date, match_rank
+FROM ranked_matches
+WHERE match_rank = 1
+ORDER BY kills DESC;
+```
 
 ---
 
@@ -187,7 +235,20 @@ LEFT JOIN reports r ON r.reported_player_id = s.player_id;
 - **Question**: For each player, calculate how many **days old** their account was when they played their first match. Use `AGE()` or timestamp subtraction between `accounts.created_at` and `MIN(match_telemetry.match_date)`. Flag anyone whose account was less than 7 days old at first match.
 - **Why this matters**: Brand new accounts dropping 20+ kills are either smurfs, bought accounts, or bots. Account age vs skill level is a core Trust & Safety signal.
 - **Approach / Notes**:
+  - `HAVING` execution order rule: attempted to filter by the alias `time_to_first_match` in `HAVING`, which failed with "column does not exist". `HAVING` evaluates before `SELECT`, so the full aggregate expression `MIN(m.match_date) - a.created_at` must be repeated in `HAVING`.
+  - Comparing interval data types: PostgreSQL allows direct interval comparisons using the `INTERVAL` keyword (`< INTERVAL '7 days'`) or explicit casting (`< '7 days'::interval`).
+  - Investigation finding: Exactly three accounts played their first match within 7 days of registration: `freshstart_01` (4.0 hrs), `freshstart_02` (3.5 hrs), and `freshstart_03` (4.75 hrs). All registered on September 10 and immediately jumped into competitive lobbies on the same day.
 - **Query**:
+```sql
+SELECT a.username, a.created_at,
+       MIN(m.match_date) AS first_match_date,
+       MIN(m.match_date) - a.created_at AS time_to_first_match
+FROM match_telemetry m
+JOIN accounts a ON a.account_id = m.player_id
+GROUP BY a.username, a.created_at
+HAVING MIN(m.match_date) - a.created_at < INTERVAL '7 days'
+ORDER BY time_to_first_match ASC;
+```
 
 ---
 
