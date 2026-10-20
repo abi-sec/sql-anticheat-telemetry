@@ -128,7 +128,7 @@ WITH suspect_stats AS (
            ROUND(AVG(kills), 2) AS avg_kills,
            CASE
                WHEN ROUND(AVG(kills), 2) >= 25 THEN 'inhuman'
-               WHEN ROUND(AVG(kills), 2) < 20 THEN 'suspicious'
+               WHEN ROUND(AVG(kills), 2) > 20 THEN 'suspicious'
                ELSE 'baseline'
            END AS kills_suspicion,
            ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) AS kd_ratio,
