@@ -90,6 +90,32 @@ HAVING MIN(m.match_date) - a.created_at < INTERVAL '7 days'
 ORDER BY time_to_first_match ASC;
 
 
+-- 6. session velocity (bot farm timing and account cycling under 1 hour)
+WITH logs AS (
+    SELECT ip_address, region, username,
+           ROUND(EXTRACT(EPOCH FROM (login_time - LAG(login_time) OVER (PARTITION BY ip_address ORDER BY login_time))) / 3600, 2) AS hours_between
+    FROM login_history i
+    LEFT JOIN accounts a ON i.account_id = a.account_id
+)
+SELECT ip_address, region, username, hours_between
+FROM logs
+WHERE hours_between < 1;
+
+
+-- 7. report burst detection (hours between consecutive reports for 3+ reported players)
+WITH reports AS (
+    SELECT a.username AS reporter, b.username AS reported,
+           ROUND(EXTRACT(EPOCH FROM (report_date - LAG(report_date) OVER (PARTITION BY reported_player_id ORDER BY report_date))) / 3600, 2) AS reports_time_diff,
+           COUNT(*) OVER (PARTITION BY reported_player_id) AS total_reports
+    FROM player_reports p
+    LEFT JOIN accounts b ON p.reported_player_id = b.account_id
+    LEFT JOIN accounts a ON p.reporter_player_id = a.account_id
+)
+SELECT reporter, reported, total_reports, reports_time_diff
+FROM reports
+WHERE total_reports >= 3;
+
+
 
 
 

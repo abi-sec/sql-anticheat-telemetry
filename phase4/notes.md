@@ -256,7 +256,27 @@ ORDER BY time_to_first_match ASC;
 - **Question**: For IP addresses shared by multiple accounts (from Phase 3 Challenge 6), use `LAG` on `login_time` to calculate the **time gap in hours** between consecutive logins from different accounts on the same IP. Use `EXTRACT(EPOCH FROM ...)` to convert the interval to hours. Flag gaps under 1 hour.
 - **Why this matters**: Bot farms cycle accounts rapidly. If account A logs out and account B logs in from the same IP 30 minutes later, that's automation. Human account-switching takes longer and is less consistent.
 - **Approach / Notes**:
+  - `GROUP BY` vs `LAG`: Combining `ARRAY_AGG` and `LAG(login_time)` at the same query level fails because `GROUP BY` squashes rows into single summaries per IP, while `LAG` requires an un-aggregated row-by-row stream to compare timestamps sequentially. Dropping `GROUP BY` keeps individual login rows intact.
+  - Two-pass CTE pattern for window filtering: Window functions evaluate during `SELECT`, which occurs after `WHERE` and `HAVING`. Trying to filter on `hours_between` in `HAVING` throws errors (aliases are invisible to HAVING, and window functions cannot be in HAVING). Wrapping the window in a CTE allows the outer query's `WHERE` to filter `hours_between < 1`.
+  - Timestamp subtraction and `EXTRACT(EPOCH)`:
+    - `login_time - LAG(login_time)` produces a PostgreSQL `INTERVAL` (e.g. `00:45:00`). You cannot divide an interval directly by 3600.
+    - `EXTRACT(EPOCH FROM <interval>)` converts the interval into total elapsed seconds (e.g. 2700.0).
+    - Dividing by 3600 converts total seconds to decimal hours (0.75).
+    - `ROUND(..., 2)` trims it to two decimal places.
+  - Subtraction order and sort direction: Subtraction must be `current - previous` (`login_time - LAG(...)`). Ordering by `login_time DESC` inside `OVER()` reverses the timeline, making `LAG` grab a newer timestamp and resulting in negative hours.
+  - Finding: Bot farm IP `91.198.174.50` shows rapid account-switching. `freshstart_03` logged in just 0.75 hours (45 minutes) after `freshstart_02`. Expanding the threshold to `< 5` hours reveals the entire morning sequence on September 10th: `freshstart_01` (08:05) -> `freshstart_02` (10:35, 2.5 hrs) -> `freshstart_03` (11:20, 0.75 hrs).
 - **Query**:
+```sql
+WITH logs AS (
+    SELECT ip_address, region, username,
+           ROUND(EXTRACT(EPOCH FROM (login_time - LAG(login_time) OVER (PARTITION BY ip_address ORDER BY login_time))) / 3600, 2) AS hours_between
+    FROM login_history i
+    LEFT JOIN accounts a ON i.account_id = a.account_id
+)
+SELECT ip_address, region, username, hours_between
+FROM logs
+WHERE hours_between < 1;
+```
 
 ---
 
@@ -264,7 +284,25 @@ ORDER BY time_to_first_match ASC;
 - **Question**: For players with 3+ reports, use `LAG` on `report_date` (partitioned by reported player, ordered by date) to calculate the **hours between consecutive reports**. Which player has the tightest burst of reports? Join with accounts for the reporter's username too.
 - **Why this matters**: A single salty report means nothing. 4 reports within 2 hours from different players in the same session = the community is reacting to live cheating. Report velocity is a stronger signal than report count.
 - **Approach / Notes**:
+  - Double JOIN on `accounts`: `player_reports` has two distinct foreign keys pointing to `accounts.account_id` (`reporter_player_id` and `reported_player_id`). Joining `accounts` twice (aliased as `a` and `b`) is required to resolve both usernames in the same output row.
+  - Window `COUNT(*) OVER (...)` vs `GROUP BY`: Instead of collapsing rows with `GROUP BY`, using `COUNT(*) OVER (PARTITION BY reported_player_id)` calculates the total report count across the partition and stamps it onto each individual report row. This preserves the row-level detail needed for `LAG`.
+  - Filtering window results in outer query: Attempted `HAVING total_reports >= 3`, which failed because `HAVING` expects an aggregate query and window functions cannot be used in `HAVING`. In the outer query from the CTE, `total_reports` is a regular column, so `WHERE total_reports >= 3` is the proper filter.
+  - Subtraction and duration conversion: `report_date - LAG(report_date)` yields an `INTERVAL`. `EXTRACT(EPOCH FROM ...)` turns it into total elapsed seconds, and dividing by 3600 converts it to decimal hours.
+  - Investigation findings: Only two players have 3+ reports: `xX_Shadow_Xx` (8 reports) and `ProGamer2024` (4 reports). `xX_Shadow_Xx` experienced the tightest burst at 49.25 hours between NoviceNinja and TacticalTina's reports, narrowly beating `ProGamer2024` (50.00 hours).
 - **Query**:
+```sql
+WITH reports AS (
+    SELECT a.username AS reporter, b.username AS reported,
+           ROUND(EXTRACT(EPOCH FROM (report_date - LAG(report_date) OVER (PARTITION BY reported_player_id ORDER BY report_date))) / 3600, 2) AS reports_time_diff,
+           COUNT(*) OVER (PARTITION BY reported_player_id) AS total_reports
+    FROM player_reports p
+    LEFT JOIN accounts b ON p.reported_player_id = b.account_id
+    LEFT JOIN accounts a ON p.reporter_player_id = a.account_id
+)
+SELECT reporter, reported, total_reports, reports_time_diff
+FROM reports
+WHERE total_reports >= 3;
+```
 
 ---
 
