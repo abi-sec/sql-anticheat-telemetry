@@ -116,6 +116,42 @@ FROM reports
 WHERE total_reports >= 3;
 
 
+-- 8. running cumulative kill curve (progression tracking and hockey-stick curve detection)
+-- CTE + named WINDOW version:
+WITH kill_curve AS (
+    SELECT a.username, m.match_date, m.kills,
+           SUM(m.kills) OVER w AS cumulative_kills,
+           ROUND(AVG(m.kills) OVER w, 2) AS running_avg
+    FROM match_telemetry m
+    LEFT JOIN accounts a ON a.account_id = m.player_id
+    WINDOW w AS (PARTITION BY m.player_id ORDER BY m.match_date)
+)
+SELECT username, match_date, kills, cumulative_kills, running_avg
+FROM kill_curve
+WHERE username IN ('ProGamer2024', 'xX_Shadow_Xx');
+
+-- direct single-query + named WINDOW version:
+SELECT a.username, m.match_date, m.kills,
+       SUM(m.kills) OVER w AS cumulative_kills,
+       ROUND(AVG(m.kills) OVER w, 2) AS running_avg
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WHERE a.username IN ('ProGamer2024', 'xX_Shadow_Xx')
+WINDOW w AS (PARTITION BY m.player_id ORDER BY m.match_date);
+
+
+-- 9. toggle detection (match kills vs player's own career average)
+SELECT username, match_date, kills,
+       ROUND(AVG(kills) OVER w, 2) AS avg_kills,
+       CASE
+           WHEN kills > (2 * (ROUND(AVG(kills) OVER w, 2))) THEN 'suspicious'
+           ELSE 'baseline'
+       END AS comparision
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WINDOW w AS (PARTITION BY player_id);
+
+
 
 
 

@@ -310,15 +310,58 @@ WHERE total_reports >= 3;
 - **Question**: For ProGamer2024 and xX_Shadow_Xx, build a **running total of kills** over time using `SUM(kills) OVER (PARTITION BY player_id ORDER BY match_date)`. Also include a running average using `AVG(kills) OVER (...)`. Show match_date, match kills, cumulative kills, and running average per match.
 - **Why this matters**: Legit players show a smooth, gradually increasing curve. A cheater shows a "hockey stick" - flat early, then suddenly steep. The running average makes the breakpoint obvious.
 - **Approach / Notes**:
+  - Wrapping scalar math around window functions: Tried `ROUND(AVG(kills), 2) OVER w`, which threw an error because `OVER` was attached to `ROUND` instead of `AVG`. Scalar functions like `ROUND()` must wrap the entire window expression: `ROUND(AVG(kills) OVER w, 2)`.
+  - CTE vs direct `WHERE` filtering: Unlike Challenges 4, 6, and 7 where filtering happened on the window output (requiring a CTE wrapper), filtering by `username` operates on an existing column before windows execute. That means a CTE is optional; filtering can be done directly in `WHERE`.
+  - Named `WINDOW` clause: Both `SUM` and `AVG` share the exact same partition and ordering. Using `WINDOW w AS (PARTITION BY player_id ORDER BY match_date)` eliminates duplicating the `OVER` definition.
+  - Investigation findings:
+    - `xX_Shadow_Xx`: Consistent flatline around 32-33 kill average across all 8 matches. Cheat was active from match #1.
+    - `ProGamer2024`: Classic hockey-stick curve. Matches 1-6 sit at a steady 3.5 kill average, then match 7 on September 1st spikes to 28 kills, pulling the running average sharply upward to 16.92 by mid-September.
 - **Query**:
+```sql
+-- CTE + named WINDOW version:
+WITH kill_curve AS (
+    SELECT a.username, m.match_date, m.kills,
+           SUM(m.kills) OVER w AS cumulative_kills,
+           ROUND(AVG(m.kills) OVER w, 2) AS running_avg
+    FROM match_telemetry m
+    LEFT JOIN accounts a ON a.account_id = m.player_id
+    WINDOW w AS (PARTITION BY m.player_id ORDER BY m.match_date)
+)
+SELECT username, match_date, kills, cumulative_kills, running_avg
+FROM kill_curve
+WHERE username IN ('ProGamer2024', 'xX_Shadow_Xx');
+
+-- Direct single-query + named WINDOW version:
+SELECT a.username, m.match_date, m.kills,
+       SUM(m.kills) OVER w AS cumulative_kills,
+       ROUND(AVG(m.kills) OVER w, 2) AS running_avg
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WHERE a.username IN ('ProGamer2024', 'xX_Shadow_Xx')
+WINDOW w AS (PARTITION BY m.player_id ORDER BY m.match_date);
+```
 
 ---
 
 ### Challenge 9: Toggle detection (match vs own average)
-- **Question**: For each match, calculate the player's **overall average kills** using a window function (`AVG(kills) OVER (PARTITION BY player_id)`). Then flag any match where kills exceeded **2x their own average**. Show username, match_date, kills, player_avg, and a "toggle_flag" column using CASE WHEN.
-- **Why this matters**: Comparing against the server baseline (Phase 2) misses players who are normally decent but occasionally toggle on. Comparing against their *own* average catches toggling behavior regardless of baseline skill level.
+- **Question**: For each match, calculate each player's **personal career average kills** using a window function (`AVG(kills) OVER (PARTITION BY player_id)`). Then flag any match where kills exceeded **2x their own career average**. Show username, match_date, kills, average kills, and a comparison column using CASE WHEN.
+- **Why this matters**: Comparing against the server baseline (Phase 2) misses players who are normally decent or bad but occasionally toggle on. Comparing against their *own* personal baseline catches toggling behavior regardless of initial skill level.
 - **Approach / Notes**:
+  - Personal baseline vs running average: Unlike Challenge 8 which had `ORDER BY match_date` inside `OVER()` (producing a progressive running average), omitting `ORDER BY` causes the window frame to cover the entire partition across all matches. This stamps each player's fixed career average onto every match row.
+  - Inline window evaluation in `CASE WHEN`: In a single SELECT pass, aliases defined in the SELECT list (like `avg_kills`) cannot be referenced inside neighboring columns (`column "avg_kills" does not exist`). Repeating the window expression directly inside `CASE WHEN kills > (2 * (ROUND(AVG(kills) OVER w, 2)))` allows direct evaluation without requiring a CTE wrapper.
+  - Investigation findings (Average Dilution): Only 1 single match on the entire server tripped the flag: `ProGamer2024` on September 15, 2026 (35 kills vs 16.92 career average, exceeding the 33.84 threshold). Why didn't his other 28-33 kill games get flagged? Because he cheated in 6 out of his 12 career games, dragging his personal baseline from ~3.5 up to 16.92. When cheats are used frequently, unweighted career baselines get diluted.
 - **Query**:
+```sql
+SELECT username, match_date, kills,
+       ROUND(AVG(kills) OVER w, 2) AS avg_kills,
+       CASE
+           WHEN kills > (2 * (ROUND(AVG(kills) OVER w, 2))) THEN 'suspicious'
+           ELSE 'baseline'
+       END AS comparision
+FROM match_telemetry m
+LEFT JOIN accounts a ON a.account_id = m.player_id
+WINDOW w AS (PARTITION BY player_id);
+```
 
 ---
 
