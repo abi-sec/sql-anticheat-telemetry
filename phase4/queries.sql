@@ -152,6 +152,58 @@ LEFT JOIN accounts a ON a.account_id = m.player_id
 WINDOW w AS (PARTITION BY player_id);
 
 
+-- 10. the investigation dossier (boss challenge: lead-driven suspect triage dossier)
+WITH leads AS (
+    SELECT player_id,
+           ROUND(AVG(kills), 2) AS avg_kills,
+           ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) AS kd_ratio,
+           ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) AS headshots_pct
+    FROM match_telemetry
+    GROUP BY player_id
+    HAVING ROUND(AVG(kills)) > 20
+        OR ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) > 3
+        OR ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) > 50
+),
+suspect_matches AS (
+    SELECT m.player_id, match_date, kills,
+           kills - LAG(kills) OVER w AS delta,
+           SUM(kills) OVER w AS cumulative_kills,
+           ROUND(AVG(kills) OVER w, 2) AS running_avg
+    FROM leads l
+    LEFT JOIN match_telemetry m ON m.player_id = l.player_id
+    WINDOW w AS (PARTITION BY m.player_id ORDER BY match_date)
+),
+suspect_reports AS (
+    SELECT reported_player_id,
+           COUNT(*) OVER (PARTITION BY reported_player_id) AS total_reports,
+           ROUND(EXTRACT(EPOCH FROM (report_date - LAG(report_date) OVER (PARTITION BY reported_player_id ORDER BY report_date))) / 3600, 2) AS report_time_diff
+    FROM leads l
+    LEFT JOIN player_reports p ON p.reported_player_id = l.player_id
+),
+suspect_logins AS (
+    SELECT account_id,
+           ROUND(EXTRACT(EPOCH FROM (login_time - LAG(login_time) OVER (PARTITION BY account_id ORDER BY login_time))) / 3600, 2) AS login_gap
+    FROM leads l
+    LEFT JOIN login_history login ON login.account_id = l.player_id
+)
+SELECT a.username,
+       a.account_status,
+       CURRENT_DATE - a.created_at::DATE AS account_age_days,
+       total_reports,
+       MIN(report_time_diff) AS tightest_burst_count,
+       MIN(login_gap) AS fastest_login_gap,
+       MAX(s.kills) AS peak_kills,
+       avg_kills,
+       kd_ratio,
+       headshots_pct
+FROM suspect_matches s
+LEFT JOIN accounts a ON a.account_id = s.player_id
+LEFT JOIN leads l ON l.player_id = s.player_id
+LEFT JOIN suspect_reports rep ON s.player_id = rep.reported_player_id
+LEFT JOIN suspect_logins login ON login.account_id = s.player_id
+GROUP BY a.username, a.account_status, a.created_at, total_reports, avg_kills, kd_ratio, headshots_pct;
+
+
 
 
 

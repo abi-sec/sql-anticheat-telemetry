@@ -365,14 +365,78 @@ WINDOW w AS (PARTITION BY player_id);
 
 ---
 
-### Challenge 10: The Timeline (Boss Challenge)
-- **Question**: Build a full temporal investigation report using a CTE pipeline. For each suspect from the Phase 3 Evidence Board:
-  1. CTE 1: Pull each suspect's matches with `LAG` kill deltas and running cumulative kills
-  2. CTE 2: Pull their login sessions with `LAG` time gaps
-  3. CTE 3: Pull their report timeline with `LAG` time gaps between reports
-  4. Final SELECT: Join everything together. Show username, account status, account age in days, each match chronologically with: kills, kill delta from previous match, running avg kills, cumulative kills, and a CASE WHEN threat flag.
-
-  Filter for the same suspects as the Evidence Board (avg kills > 20, K/D > 3.0, or headshot % > 50).
-- **Why this matters**: This is the deliverable. In a real game security role, this is the investigation packet you'd hand to a senior analyst or attach to a ban wave ticket. It tells the complete story: when the account was created, when behavior changed, how fast reports came in, and what the progression curve looks like.
+### Challenge 10: The Investigation Dossier (Boss Challenge)
+- **Question**: Build a lead-driven executive investigation dossier using a modular CTE pipeline. Start by isolating suspects from statistical telemetry anomalies, calculate their match-level progression curves, report bursts, and session velocity, then synthesize the evidence into a 1-row-per-suspect triage board.
+  1. **CTE 1 (`leads`)**: Identify primary suspects using Evidence Board criteria (avg kills > 20, K/D > 3.0, or headshot % > 50).
+  2. **CTE 2 (`suspect_matches`)**: For only those suspects, calculate match-level progression (kills, kill delta with `LAG`, cumulative kills, and running avg).
+  3. **CTE 3 (`suspect_reports`)**: Calculate time deltas between consecutive reports per suspect using `LAG`.
+  4. **CTE 4 (`suspect_logins`)**: Calculate time deltas between consecutive logins per suspect using `LAG`.
+  5. **Final SELECT**: Join the suspect match history with accounts, report history, and login history. Group by suspect to produce an executive decision table showing username, account status, account age in days, total reports, tightest report burst gap, fastest login gap, peak kills, career avg kills, career K/D ratio, and headshot percentage.
+- **Why this matters**: In security operations, complexity for the sake of complexity is bad engineering. Stacking 33 match rows across multiple event streams creates visual noise and multi-grain Cartesian products. In ban reviews and triage meetings, decision-makers need an actionable, 1-row-per-suspect summary dossier. Isolating the lead first and collapsing to suspect-level metrics at the end delivers clear, data-driven evidence.
 - **Approach / Notes**:
+  - Lead-driven investigation flow: Querying blind across hundreds of rows without a lead wastes compute and obscures patterns. CTE 1 (`leads`) sets the baseline by identifying the exact 6 suspects. Downstream CTEs join directly to `leads` to keep processing tightly scoped.
+  - The Cartesian product trap: Joining raw `player_reports` (8 rows) directly to raw `login_history` (4 rows) causes an 8 * 4 = 32 row explosion per player, filling delta columns with false `0.00` duplicates. Computing row-level window gaps (`LAG`) inside dedicated CTEs and then aggregating with `MIN()` resolves the grain mismatch.
+  - Why suspect-level aggregation won: Rather than spreading information across dozens of match rows, collapsing the final output to 1 row per suspect unifies four distinct threat vectors:
+    1. Account maturity: `CURRENT_DATE - a.created_at::DATE` provides exact integer days. This avoids the `EXTRACT(DAY FROM AGE(...))` bug, which only extracts the day component and ignores elapsed years (which falsely made a 376-day account look 10 days old).
+    2. Community panic velocity: `total_reports` paired with `MIN(report_time_diff)` reveals live in-game reactions (e.g. freshstart_03 getting reported twice in 2.50 hours).
+    3. Automation velocity: `MIN(login_gap)` exposes rapid account-cycling scripts.
+    4. Outlier extremes: `MAX(s.kills)` alongside career `avg_kills`, `kd_ratio`, and `headshots_pct` separates consistent aimbotters from sudden togglers.
+  - Final GROUP BY scoping: Any non-aggregated dimension in the final SELECT (including `a.username`, `a.account_status`, `a.created_at`, `total_reports`, `avg_kills`, `kd_ratio`, `headshots_pct`) must be included in `GROUP BY` to satisfy the SQL parser.
+  - Investigation findings (The 6 Suspects):
+    - `xX_Shadow_Xx`: 86 days old, 38 peak kills, 32.75 avg, 11.91 K/D, 86.26% headshots, 8 reports with a 49.25h burst, status under_review. Blatant aimbotter.
+    - `BannedBandit`: 147 days old, 33 peak kills, 29.50 avg, 8.43 K/D, 85.59% headshots, already banned. Matches `xX_Shadow_Xx` hardware fingerprint and IP (confirmed ban evasion).
+    - `ProGamer2024`: 376 days old (veteran player), 35 peak kills, 60.10% headshots, 4 reports with a 50.00h burst. Clear evidence of toggling on September 1st.
+    - `freshstart_03`: 46 days old, 25 peak kills, 9.60 K/D, 54.17% headshots, 7.17h login turnaround, rapid 2.50h report burst. Already banned burner bot.
+    - `freshstart_01` & `freshstart_02`: Same 46-day creation batch, 21-22 peak kills, 24-25h login gaps. Accomplices in the freshstart burner ring.
 - **Query**:
+```sql
+WITH leads AS (
+    SELECT player_id,
+           ROUND(AVG(kills), 2) AS avg_kills,
+           ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) AS kd_ratio,
+           ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) AS headshots_pct
+    FROM match_telemetry
+    GROUP BY player_id
+    HAVING ROUND(AVG(kills)) > 20
+        OR ROUND((SUM(kills)::NUMERIC / NULLIF(SUM(deaths), 0)), 2) > 3
+        OR ROUND((SUM(headshots)::NUMERIC / SUM(kills)::NUMERIC) * 100, 2) > 50
+),
+suspect_matches AS (
+    SELECT m.player_id, match_date, kills,
+           kills - LAG(kills) OVER w AS delta,
+           SUM(kills) OVER w AS cumulative_kills,
+           ROUND(AVG(kills) OVER w, 2) AS running_avg
+    FROM leads l
+    LEFT JOIN match_telemetry m ON m.player_id = l.player_id
+    WINDOW w AS (PARTITION BY m.player_id ORDER BY match_date)
+),
+suspect_reports AS (
+    SELECT reported_player_id,
+           COUNT(*) OVER (PARTITION BY reported_player_id) AS total_reports,
+           ROUND(EXTRACT(EPOCH FROM (report_date - LAG(report_date) OVER (PARTITION BY reported_player_id ORDER BY report_date))) / 3600, 2) AS report_time_diff
+    FROM leads l
+    LEFT JOIN player_reports p ON p.reported_player_id = l.player_id
+),
+suspect_logins AS (
+    SELECT account_id,
+           ROUND(EXTRACT(EPOCH FROM (login_time - LAG(login_time) OVER (PARTITION BY account_id ORDER BY login_time))) / 3600, 2) AS login_gap
+    FROM leads l
+    LEFT JOIN login_history login ON login.account_id = l.player_id
+)
+SELECT a.username,
+       a.account_status,
+       CURRENT_DATE - a.created_at::DATE AS account_age_days,
+       total_reports,
+       MIN(report_time_diff) AS tightest_burst_count,
+       MIN(login_gap) AS fastest_login_gap,
+       MAX(s.kills) AS peak_kills,
+       avg_kills,
+       kd_ratio,
+       headshots_pct
+FROM suspect_matches s
+LEFT JOIN accounts a ON a.account_id = s.player_id
+LEFT JOIN leads l ON l.player_id = s.player_id
+LEFT JOIN suspect_reports rep ON s.player_id = rep.reported_player_id
+LEFT JOIN suspect_logins login ON login.account_id = s.player_id
+GROUP BY a.username, a.account_status, a.created_at, total_reports, avg_kills, kd_ratio, headshots_pct;
+```
